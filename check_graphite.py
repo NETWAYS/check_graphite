@@ -1,5 +1,8 @@
 #!/usr/bin/python2
-import json
+try:
+  import json
+except ImportError:
+  import simplejson as json
 import requests
 import getopt
 import sys
@@ -8,7 +11,7 @@ def main():
   #parse options
   vars = {}
   try:
-    opts, args = getopt.getopt(sys.argv[1:], "g:w:c:u:h", ["help"])
+    opts, args = getopt.getopt(sys.argv[1:], "g:w:c:H:h", ["help"])
   except getopt.GetoptError as err:
     print str(err)
     usage()
@@ -22,13 +25,13 @@ def main():
       return 3
     vars[o[1]] = a
   
-  mustBeOptions = ['g','c','w','u']
+  mustBeOptions = ['g','c','w','H']
   for op in mustBeOptions:
     if op not in vars:
       usage()
       return 3
   
-  data = getGraph(vars['g'], vars['u'])
+  data = getGraph(vars['g'], vars['H'])
   if data[2] == 0:
     print "Error on handeling the request"
     return 3
@@ -39,7 +42,7 @@ def main():
     print "Invalid Thresholds"
     return 3
 
-  output = result+'|'+str(data[0])+';'+str(data[1])
+  output = result+'|'+str(data[0])+';'+str(data[1])+';'+vars['w']+';'+vars[c]
   print output
   if result == 'CRITICAL':
     return 2
@@ -54,7 +57,7 @@ def showVerboseHelp():
   print '''\
   -g [graph name]   Name of the graph as given by Graphite
 
-  -u [URL]          URL to the page Graphite is running on,
+  -H [URL]          URL to the page Graphite is running on,
                     in the form of "http://url.top/"
 
   -w [u]Wthreshold  Define warning threshold, only int or float
@@ -68,8 +71,8 @@ def showVerboseHelp():
   --help            Display this site
 
   Example usage:
-  '''+sys.argv[0]+''' -g carbon.agents.localhost_localdomain-a.cpuUsage -u http://example.com/ -w 85.4 -c u0
-  Poll the graph carbon.agents.localhost_localdomain-a.cpuUsage on example.com warning if it is over 85.4
+  '''+sys.argv[0]+''' -g carbon.agents.cpuUsage -H http://example.com/ -w 85.4 -c u0
+  Poll the graph carbon.agents.cpuUsage on example.com, warning if it is over 85.4
   and sending a critical if it is below 0.
   '''
 
@@ -97,7 +100,9 @@ def getGraph(name, url):
   return (0,js[0]["datapoints"][-1],1)
 
 def handleThreshold(data, w, c):
-  #test on critical first
+  #test on critical first, in case critical <= warning
+  #nobody will see those, so casting to flaot instead
+  #of int should be fine
     if c[0] == 'u':
       try: 
         float(c[1:])
@@ -131,7 +136,7 @@ def handleThreshold(data, w, c):
     return 'OK'
       
 def usage():
-  print 'Usage: \n'+sys.argv[0] + ' -g [Graph] -u [url] -w [u][Wthreshold] -c [u][Cthreshold] [-h, --help]'
+  print 'Usage: \n'+sys.argv[0] + ' -g [Graph] -H [url] -w [u][Wthreshold] -c [u][Cthreshold] [-h, --help]'
 
 if __name__ == "__main__":
   main()
