@@ -216,8 +216,9 @@ def showVerboseHelp():
 
   -H [URL]             URL to the page Graphite is running on,
                        in the form of "http://url.top/"
+                       Default is "http://localhost:80/"
 
-  -w [[u][Wthreshold]  Define warning threshold, only int or float
+  -w [[u]Wthreshold]  Define warning threshold, only int or float
                        use 'u' to warn if value goes below threshold
 
   -c [[u]Cthreshold]   Define critical threshold, only int or float
