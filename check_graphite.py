@@ -24,37 +24,40 @@
 import urllib2
 import getopt
 import sys
-from decimal import *
+import getpass
+from decimal import Decimal
 
 def main():
+  #asigning defaults
+  cars = {'w':None, 'c':None, 't':'24h', 'H':'http://localhost:80/'}
   #parse options
-  cars = {'w':None,'c':None}
-  
   try:
-    opts, args = getopt.getopt(sys.argv[1:], "g:w:c:H:ht:", ["help"])
-  except getopt.GetoptError:
+    opts, args = getopt.getopt(sys.argv[1:], "g:w:c:H:hm:t:T:", ["help"])
+  except getopt.GetoptError, e:
+    print e
     usage()
     return 3
   for o, a in opts:
     if o == "-h":
       usage()
-      break
+      return 3
     if o == "--help":
       showVerboseHelp()
       return 3
     cars[o[1]] = a
-  
-  mustBeOptions = ['H']
-  for op in mustBeOptions:
-    if op not in cars:
-      usage()
-      return 3
 
-  #asign defaults
-  if 't' not in cars:
-    cars['t'] = '24h'
-  if 'H' not in cars:
-    cars['H'] = 'http://localhost:80/'      
+  if 'm' in cars:
+    if cars['m'] == '1':
+      if not 'T' in cars:
+        print 'Mode 1 requires argument -T'
+        return 3
+  else:
+    cars['m'] = '0'
+
+  if not 'g' in cars:
+    print "Missing argument '-g'"
+    usage()
+    return 3
 
   data = getGraph(cars['g'], cars['H'], cars['t'])
   if data[2] == 1:
@@ -66,21 +69,29 @@ def main():
   elif data[2] == 3:
     print 'Unknown time format'
     return 3
-    
-  result = handleThreshold(data[0], cars['w'], cars['c'])
-  
-  if result == 'ERROR':
-    print "Invalid Thresholds"
-    return 3
-  
-  output = result+'|time='+str(data[1])+';value='+str(data[0])
-  
+
+  if cars['m'] == '0':
+    result = handleThreshold(data[0], cars['w'], cars['c'])
+
+    if result == 'ERROR':
+      print "Invalid thresholds"
+      return 3
+    output = result+'|time='+str(data[1])+';value='+str(data[0])
+
+  elif cars['m'] == '1':
+    result = handleOverThreshold(data[2], cars['c'], cars['w'], cars['T'])
+    if result[0] == 'ERROR':
+      print "Invalid thresholds"
+      return 3
+    output = result[0]+'|count='+str(result[1])+';perc='+str(result[2])
+
+  mmas = getMaxMinAvgSum(data[2])
   if cars['w'] != None:
     output += ';w='+cars['w']
   if cars['c'] != None:
-    output +=';c='+cars['c']
-  output += ';max='+str(data[2][0])+';min='+str(data[2][1])+';avg='+str(data[2][2])+';sum='+str(data[2][3])+';from='+cars['t']
-  
+    output += ';c='+cars['c']
+  output += ';max='+str(mmas[0])+';min='+str(mmas[1])+';avg='+str(mmas[2])+';sum='+str(mmas[3])+';from='+cars['t']
+
   print output
 
   if result == 'CRITICAL':
@@ -96,7 +107,7 @@ def getGraph(name, url, time):
   try:
     int(time[:-1])
   except ValueError:
-    return (0,0,3)
+    return (0, 0, 3)
   #no negatives please
   if time[0] == '-':
     time = time[1:]
@@ -107,15 +118,15 @@ def getGraph(name, url, time):
   elif time[-1] == 'm':
     time += 'inutes'
   else:
-    return (0,0,3)
-  
+    return (0, 0, 3)
+
   url = url+'render?target='+name+'&format=raw&from=-'+time
   try:
     r = urllib2.urlopen(url)
   except urllib2.HTTPError, e: #2.4 can't into as
     #I have no idea what I'm doing
     if e.code != 401:
-      return (0,0,1)
+      return (0, 0, 1)
     print 'The server asks for authentication'
     user = raw_input('Username: ')
     passwd = getpass.getpass('Password: ')
@@ -123,18 +134,18 @@ def getGraph(name, url, time):
     passMgr.add_password(None, url, user, passwd)
     authhandler = urllib2.HTTPBasicAuthHandler(passMgr)
     opener = urllib2.build_opener(authhandler)
-    urllib2.install_opener
+    urllib2.install_opener(opener)
     r = urllib2.urlopen(url)
   except:
-    return (0,0,1)
+    return (0, 0, 1)
 
-  text  = r.read()
+  text = r.read()
   #Find latest entry
   #entry = (data,time,MaxMinAvgSum,status)
   entry = ()
   if text == None:
-    return (0,0,1)
-  
+    return (0, 0, 1)
+
   text = text.split(',')
   try:
     ctime = int(text[1]) #Starting time
@@ -143,68 +154,117 @@ def getGraph(name, url, time):
     text[3] = t[-1] #first entry has a '|'
     text[-1] = text[-1][:-1] #last entry has a newline
   except ValueError:
-    return (0,0,2)
+    return (0, 0, 2)
 
   #traverse, collect values and keep latest entry
   vals = []
   for word in text[3:]:
     if word != 'None':
-      vals.append(word)
-      entry = (word, ctime)
+      vals.append(Decimal(word))
+      entry = (Decimal(word), ctime)
+    elif vals:
+      vals.append(vals[-1])
     ctime += step
-  
+
   if entry != ():
-    return (entry[0],entry[1],getMaxMinAvgSum(vals),0)
+    return (entry[0], entry[1], vals, 0)
 
   #if no entry is found return 0 as value und time of latest actualisiation
-  return (0,ctime,(0,0,0,0),0)
+  return (0, ctime, (0, 0, 0, 0), 0)
 
-def handleThreshold(data, w, c):
+def handleThreshold(data, warn, crit):
   #test on critical first, in case critical <= warning
   #float just yields wrong compare values sometimes
-  
-  if c != None:
-    if c[0] == 'u':
-      try: 
-        v = Decimal(c[1:])
-        d = Decimal(data)
-        if d < v:
+
+  if crit != None:
+    if crit[0] == 'u':
+      try:
+        crit = Decimal(crit[1:])
+        if data < crit:
           return 'CRITICAL'
-      except ValueError:
-        return'ERROR'
+      except:
+        return 'ERROR'
     else:
       try:
-        v = Decimal(c)
-        d = Decimal(data)
-        if d > c:
+        crit = Decimal(crit)
+        if data > crit:
           return 'CRITICAL'
-      except ValueError:
+      except:
         return 'ERROR'
-  if w != None:  
-    if w[0] == 'u':
+  if warn != None:
+    if warn[0] == 'u':
       try:
-        v = Decimal(w[1:])
-        d = Decimal(data)
-        if d < v:
+        warn = Decimal(warn[1:])
+        if data < crit:
           return 'WARNING'
-      except ValueError:
+      except:
         return 'ERROR'
     else:
-      try: 
-        t = Decimal(w)
-        d = Decimal(data)
-        if d > t:
+      try:
+        warn = Decimal(warn)
+        if data > warn:
           return 'WARNING'
-      except ValueError:
+      except:
         return 'ERROR'
-    
+
   return 'OK'
-      
+
+def handleOverThreshold(data, crit, warn, threshold):
+  res = 'OK'
+  try:
+    threshold = Decimal(threshold)
+  except:
+    res = 'ERROR'
+
+  count = 0
+  for word in data:
+    if word > threshold:
+      count += 1
+
+  perc = 100*(Decimal(count)/len(data))
+  cu = False
+  wu = False
+
+  try:
+    if crit != None:
+      if crit[0] == 'u':
+        crit = crit[1:]
+        cu = True
+      if crit[-1] != '%':
+        crit = Decimal(crit)
+        if crit > count and not cu:
+          return ('CRITICAL', count, perc)
+        if crit < count:
+          return ('CRITICAL', count, perc)
+      crit = Decimal(crit[:-1])
+      if crit > perc and not cu:
+        return ('CRITICAL', count, perc)
+      if crit < perc:
+        return ('CRITICAL', count, perc)
+    if warn != None:
+      if warn[0] == 'u':
+        warn = warn[1:]
+        wu = True
+      if warn[-1] != '%':
+        warn = Decimal(warn)
+        if warn > count and not wu:
+          return ('WARNING', count, perc)
+        if warn < count:
+          return ('WARNING', count, perc)
+      warn = Decimal(warn[:-1])
+      if warn > perc and not wu:
+        return ('WARNING', count, perc)
+      if warn < perc:
+        return ('WARNING', count, perc)
+  except:
+    res = 'ERROR'
+  return (res, count, perc)
+
 def getMaxMinAvgSum(data):
   #(max,min,avg,sum)
   a = [Decimal(i) for i in data]
-  return (max(a),min(a),sum(a)/len(a),sum(a))
- 
+  return (max(a), min(a), sum(a)/len(a), sum(a))
+
 
 def usage():
   print 'Usage: \n'+sys.argv[0] + ' -g [Graph] -H [url] [-w [u][Wthreshold]] [-c [u][Cthreshold]] [-t [time frame]] [-h, --help]'
@@ -223,17 +283,23 @@ def showVerboseHelp():
 
   -c [[u]Cthreshold]   Define critical threshold, only int or float
                        use 'u' to warn if value goes below thrshold
-  
+
   -t [time frame]      Get data for the last X [d]ays/[h]ours/[m]inutes
                        Default is 24 hours
-  
+
+  -m [mode]            Declare mode
+                       0: Default mode
+                       1: Needs -T [threshold] option, counts the time the
+                          graph is over your threshold. Can be combined
+                          with all other options
+
   -h                   Print usage
 
   --help               Display this site
 
   Example usage:
   '''+sys.argv[0]+''' -g carbon.agents.cpuUsage -H http://example.com/ -w 85.4 -c u0 -t 3d
-  Poll the graph carbon.agents.cpuUsage on example.com for the last three days, 
+  Poll the graph carbon.agents.cpuUsage on example.com for the last three days,
   warning if it is over 85.4 and sending a critical if it is below 0.
   '''
 
