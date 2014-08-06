@@ -1,7 +1,8 @@
+#!/usr/bin/env python
 #############################################################################
 #
-# Copyright (C) 2014 by NETWAYS GmbH
-#                  <support@netways.de>
+# Copyright (C) 2014 NETWAYS GmbH
+#                <support@netways.de>
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -19,22 +20,18 @@
 # Or visit their web page on the internet at http://www.fsf.org.
 #
 #############################################################################
-#!/usr/bin/env python
 
-try: 
-  import urllib2
-except:
-  import urllib as urllib2
+import urllib2
 import getopt
 import sys
-
+from decimal import *
 
 def main():
   #parse options
   cars = {'w':None,'c':None}
   
   try:
-    opts, args = getopt.getopt(sys.argv[1:], "g:w:c:H:h", ["help"])
+    opts, args = getopt.getopt(sys.argv[1:], "g:w:c:H:ht:", ["help"])
   except getopt.GetoptError:
     usage()
     return 3
@@ -47,15 +44,27 @@ def main():
       return 3
     cars[o[1]] = a
   
-  mustBeOptions = ['g','H']
+  mustBeOptions = ['H']
   for op in mustBeOptions:
     if op not in cars:
       usage()
       return 3
 
-  data = getGraph(cars['g'], cars['H'])
-  if data[2] == 0:
-    print "Error on handeling the request"
+  #asign defaults
+  if 't' not in cars:
+    cars['t'] = '24h'
+  if 'H' not in cars:
+    cars['H'] = 'http://localhost:80/'      
+
+  data = getGraph(cars['g'], cars['H'], cars['t'])
+  if data[2] == 1:
+    print "Connection error"
+    return 3
+  elif data[2] == 2:
+    print "Faulty data"
+    return 3
+  elif data[2] == 3:
+    print 'Unknown time format'
     return 3
     
   result = handleThreshold(data[0], cars['w'], cars['c'])
@@ -63,15 +72,17 @@ def main():
   if result == 'ERROR':
     print "Invalid Thresholds"
     return 3
-
+  
   output = result+'|time='+str(data[1])+';value='+str(data[0])
-
+  
   if cars['w'] != None:
     output += ';w='+cars['w']
   if cars['c'] != None:
     output +=';c='+cars['c']
+  output += ';max='+str(data[2][0])+';min='+str(data[2][1])+';avg='+str(data[2][2])+';sum='+str(data[2][3])+';from='+cars['t']
   
-  print output.rstrip('\n')
+  print output
+
   if result == 'CRITICAL':
     return 2
   if result == 'WARNING':
@@ -79,103 +90,151 @@ def main():
   else:
     return 0
 
-def showVerboseHelp():
-  print sys.argv[0]+' - Help'
-  usage()
-  print '''\
-  -g [graph name]   Name of the graph as given by Graphite
-
-  -H [URL]          URL to the page Graphite is running on,
-                    in the form of "http://url.top/"
-
-  -w [u]Wthreshold  Define warning threshold, only int or float
-                    use 'u' to warn if value goes below threshold
-
-  -c [u]Cthreshold  Define critical threshold, only int or float
-                    use 'u' to warn if value goes below thrshold
-
-  -h                Print usage
-
-  --help            Display this site
-
-  Example usage:
-  '''+sys.argv[0]+''' -g carbon.agents.cpuUsage -H http://example.com/ -w 85.4 -c u0
-  Poll the graph carbon.agents.cpuUsage on example.com, warning if it is over 85.4
-  and sending a critical if it is below 0.
-  '''
-
-#get latest changed data, return (x,y,0) on error
-def getGraph(name, url):
+#get latest changed data, return (x,y,z,0) on success
+def getGraph(name, url, time):
+  #graphite wants full names
   try:
-    r = urllib2.urlopen(url+'render?target='+name+'&format=raw')
-  except:#requests.exceptions.RequestException as e:
-    return (0,0,0)
+    int(time[:-1])
+  except ValueError:
+    return (0,0,3)
+  #no negatives please
+  if time[0] == '-':
+    time = time[1:]
+  if time[-1] == 'd':
+    time += 'ays'
+  elif time[-1] == 'h':
+    time += 'ours'
+  elif time[-1] == 'm':
+    time += 'inutes'
+  else:
+    return (0,0,3)
+  
+  url = url+'render?target='+name+'&format=raw&from=-'+time
+  try:
+    r = urllib2.urlopen(url)
+  except urllib2.HTTPError, e: #2.4 can't into as
+    #I have no idea what I'm doing
+    if e.code != 401:
+      return (0,0,1)
+    print 'The server asks for authentication'
+    user = raw_input('Username: ')
+    passwd = getpass.getpass('Password: ')
+    passMgr = urllib2.HTTPPasswordMgrWithDefaultRealm()
+    passMgr.add_password(None, url, user, passwd)
+    authhandler = urllib2.HTTPBasicAuthHandler(passMgr)
+    opener = urllib2.build_opener(authhandler)
+    urllib2.install_opener
+    r = urllib2.urlopen(url)
+  except:
+    return (0,0,1)
 
   text  = r.read()
   #Find latest entry
-  #entry = (data, time,sucess)
+  #entry = (data,time,MaxMinAvgSum,status)
   entry = ()
   if text == None:
-    return (0,0,0)
+    return (0,0,1)
   
   text = text.split(',')
-  text[-1] = text[-1][:-1] #last entry has a newline
-  ctime = int(text[1]) #Starting time
-  step = int(text[3][0])
-  t = text[3].split('|')
-  text[3] = t[-1] #first entry has a '|'
+  try:
+    ctime = int(text[1]) #Starting time
+    step = int(text[3][0])
+    t = text[3].split('|')
+    text[3] = t[-1] #first entry has a '|'
+    text[-1] = text[-1][:-1] #last entry has a newline
+  except ValueError:
+    return (0,0,2)
 
-  #traverse and keep latest entry
-  for word in text:
+  #traverse, collect values and keep latest entry
+  vals = []
+  for word in text[3:]:
     if word != 'None':
-      entry = (word, ctime, 1)
+      vals.append(word)
+      entry = (word, ctime)
     ctime += step
-
+  
   if entry != ():
-    return entry
+    return (entry[0],entry[1],getMaxMinAvgSum(vals),0)
 
   #if no entry is found return 0 as value und time of latest actualisiation
-  return (0,ctime,1)
+  return (0,ctime,(0,0,0,0),0)
 
 def handleThreshold(data, w, c):
   #test on critical first, in case critical <= warning
-  #nobody will see those, so casting to flaot instead
-  #of int should be fine
+  #float just yields wrong compare values sometimes
+  
   if c != None:
     if c[0] == 'u':
       try: 
-        float(c[1:])
-        if data < float(c[1:]):
+        v = Decimal(c[1:])
+        d = Decimal(data)
+        if d < v:
           return 'CRITICAL'
       except ValueError:
         return'ERROR'
     else:
       try:
-        float(c)
-        if data > float(c):
+        v = Decimal(c)
+        d = Decimal(data)
+        if d > c:
           return 'CRITICAL'
       except ValueError:
         return 'ERROR'
   if w != None:  
     if w[0] == 'u':
       try:
-        float(w[1:])
-        if data < float(w[1:]):
+        v = Decimal(w[1:])
+        d = Decimal(data)
+        if d < v:
           return 'WARNING'
       except ValueError:
         return 'ERROR'
     else:
       try: 
-        float(w)
-        if data > float(w):
+        t = Decimal(w)
+        d = Decimal(data)
+        if d > t:
           return 'WARNING'
       except ValueError:
         return 'ERROR'
     
   return 'OK'
       
+def getMaxMinAvgSum(data):
+  #(max,min,avg,sum)
+  a = [Decimal(i) for i in data]
+  return (max(a),min(a),sum(a)/len(a),sum(a))
+ 
+
 def usage():
-  print 'Usage: \n'+sys.argv[0] + ' -g [Graph] -H [url] -w [u][Wthreshold] -c [u][Cthreshold] [-h, --help]'
+  print 'Usage: \n'+sys.argv[0] + ' -g [Graph] -H [url] [-w [u][Wthreshold]] [-c [u][Cthreshold]] [-t [time frame]] [-h, --help]'
+
+def showVerboseHelp():
+  print '  '+sys.argv[0]+' - Help\n'
+  print '''\
+  -g [graph name]      Name of the graph as given by Graphite
+
+  -H [URL]             URL to the page Graphite is running on,
+                       in the form of "http://url.top/"
+
+  -w [[u][Wthreshold]  Define warning threshold, only int or float
+                       use 'u' to warn if value goes below threshold
+
+  -c [[u]Cthreshold]   Define critical threshold, only int or float
+                       use 'u' to warn if value goes below thrshold
+  
+  -t [time frame]      Get data for the last X [d]ays/[h]ours/[m]inutes
+                       Default is 24 hours
+  
+  -h                   Print usage
+
+  --help               Display this site
+
+  Example usage:
+  '''+sys.argv[0]+''' -g carbon.agents.cpuUsage -H http://example.com/ -w 85.4 -c u0 -t 3d
+  Poll the graph carbon.agents.cpuUsage on example.com for the last three days, 
+  warning if it is over 85.4 and sending a critical if it is below 0.
+  '''
 
 if __name__ == "__main__":
   sys.exit(main())
