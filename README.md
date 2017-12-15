@@ -1,21 +1,21 @@
-check_grapite.py
-================
-  An icinga2 plugin to check on graphite graphs
+# check\_grapite.py
 
-###Installation Instructions:
-  Without icinga:  
-    -Just run it  
 
-  With icinga:  
-  **1.** Put the Script into your Pluginfolder designated by your constants.conf  
-  **2.** Create a CheckCommand object for check_Graphite.py, remember including envs for authentication.  
-  &nbsp;&nbsp;&nbsp;&nbsp;An example config is included and make sure that location is found by your icinga2.conf.  
-  **3.** Create a Service object with all the arguments you in your hostfolder.    
-  &nbsp;&nbsp;&nbsp;&nbsp;An example config is included.  
-  **4.** Done, now start icinga2.  
+An Icinga 2 plugin to check graphite metrics.
 
-###Usage Instructions:  
-  -g [graph name]  
+# Installation
+
+* Put the Script into your Pluginfolder designated by your constants.conf  
+* Create a CheckCommand object for check_Graphite.py, remember including envs for authentication.
+  * An example config is included and make sure that location is found by your icinga2.conf.  
+* Create a Service object with all the arguments you in your hostfolder.    
+  * An example config is included.  
+* Done, now start icinga2.  
+
+# Usage
+
+```
+  -g [graph name]
   Name of the graph as given by Graphite
 
   -H [URL]  
@@ -47,12 +47,16 @@ check_grapite.py
   Example usage:  
   `./check_graphite -g carbon.agents.cpuUsage -H http://example.com/ -w 85.4 -c u0 -t 3d`  
   Poll the graph carbon.agents.cpuUsage on example.com for the last three days,  
-  warning if it is over 85.4 and sending a critical if it is below 0.
+  warning if it is over 85.4 and sending a critical if it is below 0.
+```
 
-###Output
+# Output
+
 The output will be formatted the following way:  
-Mode 0:  
-Status|most recent value;wThreshold;cThreshold;max;min;avg;sum;time  
-Mode 1:  
-Status|count over threshold;percentile over threshold;wThreshold;cThreshold;max;min;avg;sum;time  
 
+```
+Mode 0: 
+Status|most recent value;wThreshold;cThreshold;max;min;avg;sum;time   
+Mode 1: 
+Status|count over threshold;percentile over threshold;wThreshold;cThreshold;max;min;avg;sum;time  
+```
