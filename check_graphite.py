@@ -19,6 +19,12 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 # Or visit their web page on the internet at http://www.fsf.org.
 #
+# Link
+# https://github.com/NETWAYS/check_graphite
+#
+# Changelog
+# 2018-09-07 Improve check output, add verbose mode Christian Wirtz <doc@snowheaven.de>
+#
 #############################################################################
 
 import urllib2
@@ -33,7 +39,7 @@ def main():
   cars = {'w':None, 'c':None, 't':'24h', 'H':'http://localhost:80/'}
   #parse options
   try:
-    opts, args = getopt.getopt(sys.argv[1:], 'g:w:c:H:hm:t:T:', ['help'])
+    opts, args = getopt.getopt(sys.argv[1:], 'g:w:c:H:hm:t:T:v', ['help'])
   except getopt.GetoptError, e:
     print e
     usage()
@@ -59,32 +65,51 @@ def main():
     usage()
     sys.exit(3)
 
+  # Get Graphite data
   data = getGraph(cars['g'], cars['H'], cars['t'])
 
+  # Handle thresholds
+  perfdata = ""
   if cars['m'] == '0':
     result = handleThreshold(data[0], cars['w'], cars['c'])
 
     if result == 'ERROR':
       die('Invalid thresholds')
-    output = result+'|time='+str(data[1])+';value='+str(data[0])
+    perfdata = '|time='+str(data[1])+';value='+str(data[0])
 
   elif cars['m'] == '1':
     result = handleOverThreshold(data[2], cars['c'], cars['w'], cars['T'])
     if result[0] == 'ERROR':
       die('Invalid thresholds')
-    output = result[0]+'|count='+str(result[1])+';perc='+str(result[2])
+
+    perfdata = '|count='+str(result[1])+';perc='+str(result[2])
 
   mmas = getMaxMinAvgSum(data[2])
   if cars['w'] != None:
-    output += ';w='+cars['w']
+    perfdata += ';w='+cars['w']
   if cars['c'] != None:
-    output += ';c='+cars['c']
+    perfdata += ';c='+cars['c']
 
-  output += ';max='+str(mmas[0])+';min='+str(mmas[1])+';avg='+str(mmas[2])+';sum='+str(mmas[3])+';from='+cars['t']
+  # Perfdata
+  perfdata += ';max='+str(mmas[0])+';min='+str(mmas[1])+';avg='+str(mmas[2])+';sum='+str(mmas[3])+';from='+cars['t']
   #";max={mmas[0]!s};min={mmas[1]!s};avg={mmas[2]!s};sum={mmas[3]};from={cars['t']}"
   #2.4: no proper formatting
 
-  print output
+  # Create check output text and add threshold info
+  if cars['w'] != None and cars['c'] != None:
+    output = cars['g'] + " is " + str(data[0]) + " (warn/crit at " + str(cars['w']) + "/" + str(cars['c']) + "), time frame is " + cars['t']
+  else:
+    output = cars['g'] + " is " + str(data[0]) + ", time frame is " + cars['t']
+
+  # Debug
+  if 'v' in cars: print "time frame: " + cars['t']
+  if 'v' in cars: print "output    : " + output
+  if 'v' in cars: print "perfdata  : " + perfdata
+  if 'v' in cars: print "result    : " + result
+  if 'v' in cars: print "\n\n"
+
+  # Output
+  print output + perfdata
 
   if result == 'CRITICAL':
     sys.exit(2)
@@ -287,7 +312,7 @@ def showVerboseHelp():
                        in the form of "http://url.top/"
                        Default is "http://localhost:80/"
 
-                       Uses the enviroment variables GRAPHITE_ACCESS_USER 
+                       Uses the enviroment variables GRAPHITE_ACCESS_USER
                        and GRAPHITE_ACCESS_PASS for authorization
 
   -w [[u]Wthreshold]   Define warning threshold, only int or float
@@ -304,6 +329,8 @@ def showVerboseHelp():
                        1: Needs -T [threshold] option, counts the time the
                           graph is over your threshold. Can be combined
                           with all other options
+
+  -v                   Verbose mode
 
   -h                   Print usage
 
