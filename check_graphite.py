@@ -75,7 +75,7 @@ def main():
 
     if result == 'ERROR':
       die('Invalid thresholds')
-    perfdata = '|time='+str(data[1])+';value='+str(data[0])
+    perfdata = '|time='+str(data[1])+' value='+str(data[0])
 
   elif cars['m'] == '1':
     result = handleOverThreshold(data[2], cars['c'], cars['w'], cars['T'])
@@ -86,12 +86,12 @@ def main():
 
   mmas = getMaxMinAvgSum(data[2])
   if cars['w'] != None:
-    perfdata += ';w='+cars['w']
+    perfdata += ' warn='+cars['w']
   if cars['c'] != None:
-    perfdata += ';c='+cars['c']
+    perfdata += ' crit='+cars['c']
 
   # Perfdata
-  perfdata += ';max='+str(mmas[0])+';min='+str(mmas[1])+';avg='+str(mmas[2])+';sum='+str(mmas[3])+';from='+cars['t']
+  perfdata += ' max='+str(mmas[0])+' min='+str(mmas[1])+' avg='+str(mmas[2])+' sum='+str(mmas[3])+''
   #";max={mmas[0]!s};min={mmas[1]!s};avg={mmas[2]!s};sum={mmas[3]};from={cars['t']}"
   #2.4: no proper formatting
 
